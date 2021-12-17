@@ -10,6 +10,7 @@ struct Request:
     receiverAddress: address
     createdAt: uint256
     active: bool
+    desiredCreator: address
 
 MAX_REQUESTS: constant(uint256) = 256
 NATIVE_TOKEN_ADDRESS: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
@@ -49,6 +50,14 @@ event RequestDetails:
     details: String[280]
 
 event CancelRequest:
+    requestor: indexed(address)
+    requestId: uint256
+    returnedToken: address
+    returnedAmount: uint256
+    feeKept: uint256
+
+event FulfilRequest:
+    creator: indexed(address)
     requestor: indexed(address)
     requestId: uint256
     returnedToken: address
@@ -138,7 +147,8 @@ def makeRequest(_details: String[280], _desiredCreator: address, _paymentToken: 
         paymentAmount: _paymentAmount,
         receiverAddress: _receiver,
         createdAt: block.timestamp,
-        active: True
+        active: True,
+        desiredCreator: _desiredCreator
     })
     self.numberOfRequestsForUser[msg.sender] += 1
 
@@ -196,6 +206,36 @@ def setAvailability(_availability: bool):
     self.getCreator[msg.sender].isAvailable = _availability
     log CreatorSetAvailability(msg.sender, _availability)
 
+
+@external
+def fulfilRequest(_requestor: address, _requestId: uint256):
+    """
+    @notice
+        Fulfil a request that somebody has made
+        TODO: Determine how to send NFT to user
+    @param _requestor The address of the user making request
+    @param _requestId The ID of the request being cancelled
+    """
+    request: Request = self.getRequest[_requestor][_requestId]
+    assert request.active # dev: request does not exist/is not active
+    if request.desiredCreator != ZERO_ADDRESS:
+        assert request.desiredCreator == msg.sender # dev: not your request!
+    
+    # Calculate returned portion and fees
+    fee: uint256 = request.paymentAmount * self.fees / FEE_DENOMINATOR
+    payment: uint256 = request.paymentAmount - fee
+    token: address = request.paymentToken
+
+    self.getRequest[_requestor][_requestId] = empty(Request)
+
+    if token == NATIVE_TOKEN_ADDRESS:
+        send(msg.sender, payment)
+        send(self.vault, fee)
+    else:
+        self.erc20_safe_transfer(token, msg.sender, payment)
+        self.erc20_safe_transfer(token, self.vault, fee)
+
+    log FulfilRequest(msg.sender, _requestor, _requestId, token, payment, fee)
 
 
 # Admin functions below
